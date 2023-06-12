@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1609234501623.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "6108EF76",
+    "lastKnownWriteTime" : 1609234350,
+    "last_content_update" : 1609234350,
+    "path" : "~/Rcode/app_horn.R",
+    "project_path" : null,
+    "properties" : {
+        "cursorPosition" : "246,5",
+        "scrollLine" : "232"
+    },
+    "relative_order" : 5,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

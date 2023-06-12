@@ -1,0 +1,288 @@
+#
+# This is a Shiny web application. You can run the application by clicking
+# the 'Run App' button above.
+#
+# Find out more about building applications with Shiny here:
+#
+#    http://shiny.rstudio.com/
+#
+
+
+#---- Shiny APP ----
+# Define UI for application that draws a histogram
+
+ui <- fluidPage(
+  titlePanel("柳杉生長模式"),
+   # Application title
+  sidebarLayout(
+    sidebarPanel(
+      fluidRow(
+     column(8,fileInput("inputfile", h3("File input(csv檔)"), accept=c('text/csv','text/comma-separated-values,text/plain','.csv'))),
+     column(4,selectInput("select", h3("Select box"), 
+                          choices = list("Volume" = 1, "Basal Area" = 2,
+                          "Density" = 3,"Height"=4,"QMD"=5), selected = 1))
+   ),
+   fluidRow(
+     column(6,h3("資料格式(.csv)"))
+   ),
+   fluidRow(
+     column(6, numericInput("Area", h3("Stand Area (hectare)"), value = 0))
+   ),  
+   fluidRow(
+     column(3, numericInput("StartAge", h3("Start Age (year)"), value = 0))
+     ), 
+   fluidRow(
+     column(3, numericInput("EndAge", h3("End Age (year)"), value = 0))
+   ),   
+   fluidRow(
+     column(6, numericInput("sd_DBH_", h4("DBH Random Effect"), value = 0.0001))
+   ),
+   fluidRow(
+     column(6, numericInput("sd_H_", h4("Height Random Effect"), value = 1))
+   ),
+   fluidRow(
+     column(6, numericInput("sd_Mor_", h4("Mortality Random Effect"), value = 0.0001))
+   ),
+   actionButton("button", h3("Run Simulation!"))
+    ),
+   mainPanel(
+     plotOutput("plot")
+   )
+  )
+)
+
+# Define server logic required to draw a histogram
+server <- function(input, output) {
+    
+  library(shiny)
+  library(tidyr)
+  library(dplyr)
+  library(ggplot2)
+  #########################################################
+  ### Cryptomeria japonica individual tree growth model ###
+  #########################################################
+  
+  #---- Initializing Required Functions ----
+  
+  #---- DBH increment ----
+  a0 <- -6.801 ; a1 <- 0.213 ; a2 <- -0.002 ; a3 <- -0.030 ; a4 <- 0.195
+  DBH_inc <- function(DBH,Age,H,D,sd_DBH){
+    mH <- mean(H, na.rm = T)
+    CI <-10000/(mH*D^0.5)
+    lnG <- a0 + a1*DBH + a2*DBH^2 + a3*Age + a4*CI + rnorm(length(DBH),0,sd_DBH)
+    return(exp(lnG))
+  }
+  
+  #---- Mortality ----
+  mor_rate <- function(DBH_this,DBH_next,sd_mor){
+    mor <- 1-(DBH_next/DBH_this)^(-1.19)+rnorm(length(DBH_this),0,sd_mor)
+    return(mor)
+  }
+  
+  #---- Height increment ----
+  # Stand H growth prediction (本函數只能用於計算每年的生長量)
+  # Cheng, Ching-peng, Yang, Sheng-i, Wang, Ya-nan, Tsai, Ming-jer, Chiou, Chyi-rong (2014). Study of Long-term Growth of Tree Height and Height-diameter Curve in Xitou Japanese Cedar ( Cryptomeria japonica ) Plantation
+  # 生長停滯年林齡為"GrowthStopY"，隨機誤差項調整在該年之後為RMSE * 0.0001
+  H_Growth_2 <- function (StartAge, H_rank, G_RMSE) { # G_RMSE is abitrarily given. H_rank is the percentile the of height the tree is in.
+    # Assign parameters according to H_rank
+    if (is.na(H_rank)) {
+      return(NA)
+    }else{
+      if (H_rank < 0 | H_rank > 100) {
+        print("Error: Tree height ranking is out of range.")
+      }else{
+        if (H_rank >= 0 & H_rank < 40) { # L layer
+          a <- 25.9557
+          b <- 0.0689
+          c <- 1.6908
+          GrowthStopY <- 54.8 # 生長停滯年齡(yr)
+        }
+        if (H_rank >= 40 & H_rank < 70) { # M layer
+          a <- 29.7380
+          b <- 0.0577
+          c <- 1.3301
+          GrowthStopY <- 63.6 # 生長停滯年齡(yr)
+        }
+        if (H_rank >= 70 & H_rank <= 100) { # U layer. "<=" for calculation simplicity.
+          a <- 31.8775
+          b <- 0.0596
+          c <- 1.3043
+          GrowthStopY <- 62.4 # 生長停滯年齡(yr)
+        }
+        
+        H_G <- -1
+        while (H_G < 0) { # to avoid negative increment
+          H0 <- a * ((1 - exp(-b * StartAge)) ^ c)
+          H1 <- a * ((1 - exp(-b * (StartAge + 1))) ^ c)
+          std = G_RMSE * max((1 - StartAge / GrowthStopY), 0.0001)
+          H_G <- H1 - H0 + rnorm(1, mean = 0, sd = std) 
+          # 只把random error加在這邊是因為如果加在上面兩個式子，分別計算兩個error太容易造成負生長量了，然後用while去避免的話，會造成error的分布右偏
+        }
+        return(H_G)
+      }
+    }
+  }
+  
+  #---- DBH to H Allometric Equation ----
+  # Individual DBH to H prediction curve
+  # Cheng, Ching-peng, Yang, Sheng-i, Wang, Ya-nan, Tsai, Ming-jer, Chiou, Chyi-rong (2014). Study of Long-term Growth of Tree Height and Height-diameter Curve in Xitou Japanese Cedar ( Cryptomeria japonica ) Plantation
+  
+  #creating parameter table
+  pars <- data.frame("age" = integer(17))
+  pars$age <- c(7, 12, 17, 22, 27, 32, 37, 42,
+                52, 57, 66, 72, 76, 82, 92, 96, 102)
+  pars$age_min <- c(0, 10, 15, 20, 25, 30, 35, 40,
+                    47, 55, 62, 69, 74, 79, 87, 94, 99) # the representing age of this dataset defined by myself arbitrarily
+  pars$age_max <- c(9, 14, 19, 24, 29, 34, 39,
+                    46, 54, 61, 68, 73, 78, 86, 93, 98, 102) # the representing age of this dataset defined by myself arbitrarily
+  pars$mH <- c(6.9, 11.6, 15.7, 18.7, 21.5, 24.1, 25.7, 26.6,
+               22.0, 26.0, 28.3, 28.0, 28.8, 28.0, 27.6, 25.1, 23.3)
+  pars$m <- c(2.896, 4.515, 5.708, 8.745, 10.340, 8.086, 12.404, 14.945,
+              4.227, 10.021, 10.852, 8.571, 12.361, 11.263, 2.489, 11.921, 9.729)
+  pars$n <- c(0.392, 0.362, 0.355, 0.250, 0.231, 0.322, 0.211, 0.166,
+              0.482, 0.265, 0.256, 0.321, 0.277, 0.249, 0.633, 0.193, 0.226)
+  pars$RMSE <- c(0.85, 1.23, 0.72, 1.25, 1.29, 1.45, 1.55, 1.60,
+                 2.49, 2.36, 1.81, 1.66, 1.92, 2.01, 2.95, 1.59, 1.94)
+  
+  # main function: H = m * DBH ^ n + e, m = f(age), n = f(age), e ~ N(0, RMSE)
+  DBH2H <- function (DBH, Age) {
+    if (is.na(DBH)) {
+      return(NA)
+    }else{
+      if (Age > 102 | Age < 0) {
+        print("Error: Input age is out of predicting range. Please use earlier stand data. Age must be between 0 to 102 years.")
+      }else{
+        r <- which(Age >= pars$age_min & Age <= pars$age_max) #find the age group the input data is belong to
+        m <- pars$m[r]
+        n <- pars$n[r]
+        RMSE <- pars$RMSE[r]
+        e <- rnorm(1, 0, RMSE)
+        H <- m * (DBH ^ n) + e
+        return(H)
+      }
+    }
+  }
+  
+  #=======================================================================================
+  #---- Main Cj Growth Model Function ----
+  CjGY <- function(DBH, D, startage, endage, Area, sd_DBH_, sd_Mor_, sd_H_){
+    
+    forest <- data.frame("ID"=seq(1:D),"DBH"=DBH,"Height"=numeric(D),"Age"=rep(startage,D))
+    
+    # predict individual tree height from DBH
+    for (i in 1:nrow(forest)) {
+      forest$Height[i] <- DBH2H(DBH = forest$DBH[i], Age = startage)
+    }
+    
+    # initialize parameters
+    H_now <- forest$Height
+    H_mean_now <- mean(H_now, na.rm = T)
+    DBH_now <- DBH
+    D_now <- D
+    
+    stand_attribute <- data.frame("Age"=startage,"QMD"=sqrt(mean(DBH^2, na.rm = T)),"Stand_height"=H_mean_now,"Den"=D/Area,"Stand_vol"=sum(0.00007854*DBH^2*H_now*0.45, na.rm = T))
+    
+    for (i in startage:(endage-1)) {
+      #Calculating Growth
+      DBH_next <- DBH_now + DBH_inc(DBH = DBH_now, H = H_now, D = D_now/Area, Age = i, sd_DBH=sd_DBH_)
+      H_rank <- rank(H_now, na.last = "keep")/length(H_now)*100 # Calculate percentile rank of tree heights
+      
+      H_next <- numeric(length(H_now))
+      for (j in 1:length(H_next)) {
+        H_next[j] <- H_now[j] + H_Growth_2(StartAge = i, H_rank = H_rank[j], G_RMSE = sd_H_)
+      }
+      
+      MorRate_now <- mor_rate(DBH_this = sqrt(mean(DBH_now^2, na.rm = T)), DBH_next = sqrt(mean(DBH_next^2, na.rm = T)), sd_mor = sd_Mor_)
+      Death_index <- runif(D)
+      
+      #Die according to DBH ranking
+      DBH_rank <- rank(DBH_now, na.last = "keep")/length(DBH_now) # Calculate percentile rank of tree DBH
+      #Mortality Weight graphical function
+      Mor_df <- data.frame("DBH_ranking" = seq(from = 1, to = 100, by = 1), "weight" = numeric(100))
+      Mor_df$weight[1:68] <- seq(from = 3, to = 0, length.out = 68)
+      Mor_df$weight[69:100] <- rep(0, 32)
+      
+      Mor_weight <- numeric(length(DBH_rank))
+      for (j in 1:length(Mor_weight)) {
+        if (is.na(DBH_rank[j])) {
+          Mor_weight[j] <- NA
+        }else{
+          Mor_weight[j] <- Mor_df$weight[which(ceiling(DBH_rank[j]*100) == Mor_df$DBH_ranking)]
+        }
+      }
+      
+      Death_boolean <- Death_index <= MorRate_now * Mor_weight
+      DBH_next[Death_boolean] <- NA
+      H_next[Death_boolean] <- NA
+      D_next <- D - sum(is.na(DBH_next))
+      
+      #append data
+      df <- data.frame("ID"=1:D, "DBH"=DBH_next, "Height"=H_next, "Age"=rep(i+1, D))
+      forest <- forest %>% bind_rows(df)
+      stand_attribute[nrow(stand_attribute)+1,] <- c(i+1, sqrt(mean(DBH_next^2, na.rm = T)), mean(H_next, na.rm = T), D_next/Area, sum(0.00007854*DBH_next^2*H_next*0.45, na.rm = T))
+      
+      #update
+      H_now <- H_next
+      H_mean_now <- mean(H_now, na.rm = T)
+      DBH_now <- DBH_next
+      D_now <- D_next
+      
+      #break from total death
+      if (D_now <= 0){
+        print("Warning: Trees all diead.")
+        break
+      }
+    }
+    #output
+    return(stand_attribute)
+  }
+  
+  #ggplot(run_test[[1]]) + geom_path(aes(x = Age, y = DBH, group = ID))
+  #ggplot(run_test[[1]]) + geom_path(aes(x = Age, y = Height, group = ID))
+
+  values <- reactiveValues(sim_growth = NULL, trees = NULL)
+  Age_Volume<-eventReactive(input$button, {
+    values$trees <- read.csv(input$inputfile$datapath)
+    values$sim_growth <- CjGY(values$trees$DBH, nrow(values$trees), input$StartAge, input$EndAge, input$Area, input$sd_DBH_, input$sd_Mor_, input$sd_H_)
+    plot(values$sim_growth$Age, values$sim_growth$Stand_vol)
+  })
+  Age_Den<-eventReactive(input$button, {
+    values$trees <- read.csv(input$inputfile$datapath)
+    values$sim_growth <- CjGY(values$trees$DBH, nrow(values$trees), input$StartAge, input$EndAge, input$Area, input$sd_DBH_, input$sd_Mor_, input$sd_H_)
+    plot(values$sim_growth$Age, values$sim_growth$Den)
+  })
+  Age_Height<-eventReactive(input$button, {
+    values$trees <- read.csv(input$inputfile$datapath)
+    values$sim_growth <- CjGY(values$trees$DBH, nrow(values$trees), input$StartAge, input$EndAge, input$Area, input$sd_DBH_, input$sd_Mor_, input$sd_H_)
+    plot(values$sim_growth$Age, values$sim_growth$Stand_height)
+  })
+  Age_QMD<-eventReactive(input$button, {
+    values$trees <- read.csv(input$inputfile$datapath)
+    values$sim_growth <- CjGY(values$trees$DBH, nrow(values$trees), input$StartAge, input$EndAge, input$Area, input$sd_DBH_, input$sd_Mor_, input$sd_H_)
+    plot(values$sim_growth$Age, values$sim_growth$QMD)
+  })
+  output$plot <- renderPlot({
+    if (input$select==1){
+      Age_Volume()
+    }
+    if (input$select==2){
+      
+    }
+    if (input$select==3){
+      Age_Den()
+    }
+    if (input$select==4){
+      Age_Height()
+    }
+    if (input$select==5){
+      Age_QMD()
+    }
+  })
+    
+  
+}
+
+# Run the application 
+shinyApp(ui = ui, server = server)
+
+

@@ -1,0 +1,22 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1608617231235.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "B59A070C",
+    "lastKnownWriteTime" : 1609234550,
+    "last_content_update" : 1609234550233,
+    "path" : "~/Rcode/GrowthModelShiny/app.R",
+    "project_path" : "app.R",
+    "properties" : {
+        "cursorPosition" : "245,0",
+        "scrollLine" : "225"
+    },
+    "relative_order" : 1,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}

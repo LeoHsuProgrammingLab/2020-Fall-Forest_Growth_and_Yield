@@ -1,0 +1,120 @@
+setwd("/Users/mingtzu/Rcode")
+library("nlstools")
+library("nlme")
+library(lattice)
+
+gutten2<-read.csv("gutten2.csv")
+gutten2$BA<-(gutten2$dbh.cm)^2*0.00007854
+for (i in 1:1200){
+  gutten2$num[i]=paste(gutten2$location[i],gutten2$tree[i],sep=".")
+  sumBA<-0
+  for (j in 1:1200){
+    if(gutten2$age.base[j]==gutten2$age.base[i] & gutten2$location[j]==gutten2$location[i]){
+      if (gutten2$BA[j]>gutten2$BA[i]){
+        sumBA<-sumBA+gutten2$BA[j]
+      }
+    }
+  }
+  gutten2$BAL[i]<-sumBA
+}
+View(gutten2)
+#Primitive model of Ber NLME
+dbh.pred1<-function(age.base,B1,B2){
+  dbh.p<-(B1)*(1-exp(-(B2)*age.base))^3
+  return(dbh.p)}
+
+nls.fit.Ber1<-nls(dbh.cm~dbh.pred1(age.base,B1,B2),
+                   start=list(B1=27.360790,B2=0.054481),
+                   data=gutten2)
+summary(nls.fit.Ber1)
+plot(nlsResiduals(nls.fit.Ber1),which=1)
+gutten2.d.Ber1<-groupedData(dbh.cm~age.base|num,data=gutten2)
+gutten2.nlsList.Ber1<-nlsList(dbh.cm~dbh.pred1(age.base,B1,B2),
+                 start=list(B1=27,B2=0.05),
+                 data=gutten2.d.Ber1,subset = gutten2.d.Ber1$location%in%c(1,3,4,5,7))
+summary(gutten2.nlsList.Ber1)
+gutten2.nlme.Ber1<-nlme(gutten2.nlsList.Ber1)
+summary(gutten2.nlme.Ber1)
+plot(ACF(gutten2.nlme.Ber1,resType='n',maxLag=10),alpha=0.01)
+
+#full model of Ber NLME
+dbh.pred2<-function(age.base,si,BAL,B10,B11,B12,B20,B21,B22){
+  dbh.p<-(B10+B11*si+B12*BAL)*(1-exp(-(B20+B21*si+B22*BAL)*age.base))^3
+  return(dbh.p)}
+
+nls.fit.Ber2<-nls(dbh.cm~dbh.pred2(age.base,si,BAL,B10,B11,B12,B20,B21,B22),
+                  start=list(B10=27.360790,B11=0,B12=0,B20=0.054481,B21=0,B22=0),
+                  data=gutten2)
+summary(nls.fit.Ber2)
+gutten2.d.Ber2<-groupedData(dbh.cm~age.base|num,data=gutten2)
+gutten2.nlme.Ber2<-nlme(dbh.cm~dbh.pred2(age.base,si,BAL,B10,B11,B12,B20,B21,B22),
+                        start=c(B10=27.360790,B11=0,B12=0,B20=0.054481,B21=0,B22=0),
+                        data=gutten2.d.Ber2,
+                        fixed=B10+B11+B12+B20+B21+B22~1,
+                        random=B10+B20~1,subset=gutten2.d.Ber1$location%in%c(1,3,4,5,7))
+summary(gutten2.nlme.Ber2)
+gutten2.nlme.Ber2<-update(gutten2.nlme.Ber2,correlation= corARMA (p=2,q=0),control=list( maxIter =200))
+plot(ACF(gutten2.nlme.Ber2,resType='n',maxLag=10),alpha=0.01)
+
+#Hossfeld的nls fit
+dbh.pred<-function(age.base,si,BAL,B10,B11,B12,B20,B21,B22,B30,B31,B32){
+  dbh.p<-age.base^(B30+B31*si+B32*BAL)/((age.base^(B30+B31*si+B32*BAL)/(B10+B11*si+B12*BAL))+(B20+B21*si+B22*BAL))
+  return(dbh.p)}
+nls.fit.Hos<-nls(dbh.cm~dbh.pred(age.base,si,BAL,B10,B11,B12,B20,B21,B22,B30,B31,B32),
+                   start=list(B10=33,B11=0,B12=0,B20=4,B21=0,B22=0,B30=1,B31=0,B32=0),
+                   data=gutten2)
+summary(nls.fit.Hos)
+plot(nlsResiduals(nls.fit.Hos),which=1)
+
+#nlme
+gutten2.d<-groupedData(dbh.cm~age.base|num,data=gutten2)
+head(gutten2.d)
+str(gutten2.d)
+gutten2.nls<-nls(dbh.cm~dbh.pred(age.base,si,BAL,B10,B11,B12,B20,B21,B22,B30,B31,B32),
+    start=list(B10=33,B11=0,B12=0,B20=4,B21=0,B22=0,B30=1,B31=0,B32=0),
+    data=gutten2)
+summary(gutten2.nls)
+gutten2.nlsList<-nlsList(dbh.cm~dbh.pred(age.base,si,BAL,B10,B11,B12,B20,B21,B22,B30,B31,B32),
+                         start=list(B10=56,B11=0,B12=-19,B20=20,B21=0,B22=32,B30=1,B31=0,B32=0),
+                         data=gutten2.d)
+summary(gutten2.nlsList)
+gutten2.nlme.0<-nlme(gutten2.nlsList)
+summary(gutten2.nlme.0)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+data(gutten)
+gutten<-gutten[gutten$location==1,]
+xyplot(dbh.cm~age.bh,data=gutten,type="o",groups=tree,auto.key=list(space="right"))
+gutten.nls<-nls(dbh.cm~B1*(1-exp(-log(2)/B2*age.bh)),start=list(B1=29,B2=10),data=gutten)
+summary(gutten.nls)     
+
+gutten.d<-groupedData(dbh.cm~age.bh|tree,data=gutten)
+head(gutten.d)
+str(gutten.d)
+
+gutten.nlsList<-nlsList(dbh.cm~B1*(1-exp(-log(2)/B2*age.bh)),start=list(B1=29,B2=10),data=gutten.d)
+gutten.nlsList
+summary(gutten.nlsList)
+#在建立nlme model之前，要先建立nlslist model
+gutten.nlme.0<-nlme(gutten.nlsList)
+summary(gutten.nlme.0)
+#cov/std(a)*std(b)=correlation
+plot(ACF(gutten.nlme.0,resType='n',maxLag=10),alpha=0.01)
+gutten.nlme.1<-update(gutten.nlme.0,correlation=corARMA(p=2,q=1), control=list(maxIter=200))
+plot(ACF(gutten.nlme.1,resType='n',maxLag=10),alpha=0.01)
+summary(gutten.nlme.1)
+
+

@@ -1,0 +1,29 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1608619627541.000,
+    "dirty" : false,
+    "encoding" : "",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "E91DDE0C",
+    "lastKnownWriteTime" : 4420945664,
+    "last_content_update" : 1608619627541,
+    "path" : null,
+    "project_path" : null,
+    "properties" : {
+        "cacheKey" : "CB9E32CD",
+        "caption" : "gutten2",
+        "contentUrl" : "grid_resource/gridviewer.html?env=&obj=gutten2&cache_key=CB9E32CD",
+        "displayedObservations" : "1200",
+        "environment" : "",
+        "object" : "gutten2",
+        "preview" : "0",
+        "totalObservations" : "1200",
+        "variables" : "9"
+    },
+    "relative_order" : 3,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_dataframe"
+}
